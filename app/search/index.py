@@ -1,80 +1,84 @@
-from collections import Counter, defaultdict
-
-from app.search.tokenizer import tokenize
+from collections import defaultdict
+from typing import Dict
 
 
 class InvertedIndex:
     def __init__(self):
-        self.documents: dict[str, str] = {}
+        # term -> {document_path: frequency}
+        self.index: Dict[str, Dict[str, int]] = defaultdict(dict)
 
-        self.postings: dict[
-            str,
-            dict[str, int]
-        ] = defaultdict(dict)
+        # document_path -> total number of tokens
+        self.document_lengths: Dict[str, int] = {}
 
-        self.document_lengths: dict[str, int] = {}
+        self.total_documents = 0
+        self.total_document_length = 0
 
-    def add_document(
-        self,
-        doc_id: str,
-        content: str,
-    ) -> None:
-        if doc_id in self.documents:
-            self.remove_document(doc_id)
+    def add_document(self, document_path: str, tokens: list[str]) -> None:
+        """
+        Add a tokenized document to the inverted index.
+        """
 
-        tokens = tokenize(content)
+        # If we're re-indexing an existing document,
+        # remove the old version first.
+        if document_path in self.document_lengths:
+            self.remove_document(document_path)
 
-        self.documents[doc_id] = content
-        self.document_lengths[doc_id] = len(tokens)
+        term_frequencies = {}
 
-        frequencies = Counter(tokens)
+        for token in tokens:
+            term_frequencies[token] = term_frequencies.get(token, 0) + 1
 
-        for term, frequency in frequencies.items():
-            self.postings[term][doc_id] = frequency
+        for term, frequency in term_frequencies.items():
+            self.index[term][document_path] = frequency
 
-    def remove_document(self, doc_id: str) -> None:
-        if doc_id not in self.documents:
+        document_length = len(tokens)
+
+        self.document_lengths[document_path] = document_length
+        self.total_documents += 1
+        self.total_document_length += document_length
+
+    def remove_document(self, document_path: str) -> None:
+        """
+        Remove a document and its statistics from the index.
+        """
+
+        if document_path not in self.document_lengths:
             return
 
-        content = self.documents[doc_id]
-        terms = set(tokenize(content))
+        old_length = self.document_lengths.pop(document_path)
 
-        for term in terms:
-            posting = self.postings.get(term)
+        self.total_documents -= 1
+        self.total_document_length -= old_length
 
-            if posting is None:
-                continue
+        empty_terms = []
 
-            posting.pop(doc_id, None)
+        for term, postings in self.index.items():
+            postings.pop(document_path, None)
 
-            if not posting:
-                del self.postings[term]
+            if not postings:
+                empty_terms.append(term)
 
-        del self.documents[doc_id]
-        self.document_lengths.pop(doc_id, None)
+        for term in empty_terms:
+            del self.index[term]
 
-    def get_postings(
-        self,
-        term: str,
-    ) -> dict[str, int]:
-        return self.postings.get(term.lower(), {})
+    def get_postings(self, term: str) -> Dict[str, int]:
+        """
+        Return documents containing the term and their term frequencies.
+        """
+        return self.index.get(term, {})
 
-    def document_frequency(
-        self,
-        term: str,
-    ) -> int:
-        return len(self.get_postings(term))
+    def get_document_frequency(self, term: str) -> int:
+        """
+        Number of documents containing the term.
+        """
+        return len(self.index.get(term, {}))
 
-    @property
-    def document_count(self) -> int:
-        return len(self.documents)
+    def get_document_length(self, document_path: str) -> int:
+        return self.document_lengths.get(document_path, 0)
 
     @property
     def average_document_length(self) -> float:
-        if not self.document_lengths:
+        if self.total_documents == 0:
             return 0.0
 
-        return (
-            sum(self.document_lengths.values())
-            / len(self.document_lengths)
-        )
+        return self.total_document_length / self.total_documents

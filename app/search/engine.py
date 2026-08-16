@@ -22,6 +22,7 @@ class SearchEngine:
         doc_id: str,
         content: str,
     ) -> None:
+        tokens = tokenize(content)
         self.index.add_document(
             doc_id,
             content,
@@ -34,16 +35,18 @@ class SearchEngine:
         self.index.remove_document(doc_id)
 
     def search(
-        self,
-        query: str,
-        limit: int = 10,
-    ) -> list[SearchResult]:
+    self,
+    query: str,
+    limit: int = 10,
+        ) -> list[SearchResult]:
         if not query.strip():
-            return []
+         return []
+
+        query_terms = tokenize(query)
 
         candidate_documents: set[str] = set()
 
-        for term in tokenize(query):
+        for term in query_terms:
             candidate_documents.update(
                 self.index
                 .get_postings(term)
@@ -53,8 +56,8 @@ class SearchEngine:
         scored_documents = []
 
         for doc_id in candidate_documents:
-            score = self.ranker.score(
-                query,
+            score = self.ranker.score_query(
+                query_terms,
                 doc_id,
             )
 

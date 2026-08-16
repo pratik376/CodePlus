@@ -1,13 +1,16 @@
 from fastapi import FastAPI, HTTPException
 
-from graph.parser import PythonDependencyParser
-from app.repository.loader import RepositoryLoader
 from app.schemas.search import (
+    DependencyResponse,
+    ImpactResponse,
     RepositoryRequest,
+    RepositoryResponse,
     SearchRequest,
-    SearchResponse,
+    SearchResultResponse,
 )
-from app.search.engine import SearchEngine
+from app.services.repository_service import (
+    RepositoryService,
+)
 
 
 app = FastAPI(
@@ -20,43 +23,41 @@ app = FastAPI(
 )
 
 
-search_engine = SearchEngine()
-repository_loader = RepositoryLoader(
-    search_engine
-)
+service = RepositoryService()
 
-dependency_graph = None
+@app.get("/")
+def root():
+    return {
+        "name": "CodePulse",
+        "version": "0.1.0",
+        "status": "running",
+        "docs": "/docs",
+    }
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "documents": (
-            search_engine
+        "indexed_files": (
+            service
+            .search_engine
             .index
             .document_count
         ),
     }
 
 
-@app.post("/repositories/index")
+@app.post(
+    "/repositories/index",
+    response_model=RepositoryResponse,
+)
 def index_repository(
     request: RepositoryRequest,
 ):
-    global dependency_graph
-
     try:
-        count = repository_loader.load(
+        count = service.index_repository(
             request.path
-        )
-
-        parser = PythonDependencyParser()
-
-        dependency_graph = (
-            parser.parse_repository(
-                request.path
-            )
         )
 
     except FileNotFoundError as error:
@@ -65,23 +66,31 @@ def index_repository(
             detail=str(error),
         )
 
-    return {
-        "indexed_files": count,
-    }
+    except NotADirectoryError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        )
+
+    return RepositoryResponse(
+        indexed_files=count
+    )
 
 
 @app.post(
     "/search",
-    response_model=list[SearchResponse],
+    response_model=list[SearchResultResponse],
 )
-def search(request: SearchRequest):
-    results = search_engine.search(
+def search(
+    request: SearchRequest,
+):
+    results = service.search(
         query=request.query,
         limit=request.limit,
     )
 
     return [
-        SearchResponse(
+        SearchResultResponse(
             file=result.doc_id,
             score=round(
                 result.score,
@@ -92,35 +101,60 @@ def search(request: SearchRequest):
     ]
 
 
-@app.get("/dependencies")
+@app.get(
+    "/dependencies",
+    response_model=DependencyResponse,
+)
 def dependencies(file: str):
-    if dependency_graph is None:
+    try:
+        result = service.dependencies(file)
+
+    except RuntimeError as error:
         raise HTTPException(
-            status_code=400,
-            detail="No repository indexed",
+            status_code=409,
+            detail=str(error),
         )
 
-    return {
-        "file": file,
-        "dependencies": (
-            dependency_graph
-            .transitive_dependencies(file)
-        ),
-    }
+    return DependencyResponse(
+        file=file,
+        dependencies=result,
+    )
 
 
-@app.get("/impact")
+@app.get(
+    "/impact",
+    response_model=ImpactResponse,
+)
 def impact(file: str):
-    if dependency_graph is None:
+    try:
+        production_files, test_files = (
+            service.impact(file)
+        )
+
+    except RuntimeError as error:
         raise HTTPException(
-            status_code=400,
-            detail="No repository indexed",
+            status_code=409,
+            detail=str(error),
+        )
+
+    return ImpactResponse(
+        file=file,
+        production_files=production_files,
+        test_files=test_files,
+    )
+
+
+@app.get("/cycles")
+def cycles():
+    try:
+        has_cycle = service.has_cycle()
+
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=str(error),
         )
 
     return {
-        "file": file,
-        "impacted_files": (
-            dependency_graph
-            .impact_analysis(file)
-        ),
+        "has_cycle": has_cycle
     }

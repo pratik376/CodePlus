@@ -1,7 +1,6 @@
 import math
 
 from app.search.index import InvertedIndex
-from app.search.tokenizer import tokenize
 
 
 class BM25:
@@ -9,15 +8,19 @@ class BM25:
         self,
         index: InvertedIndex,
         k1: float = 1.5,
-        b: float = 0.75,
+        b: float = 0.75
     ):
         self.index = index
         self.k1 = k1
         self.b = b
 
-    def _idf(self, term: str) -> float:
-        total_documents = self.index.document_count
-        document_frequency = self.index.document_frequency(term)
+    def idf(self, term: str) -> float:
+        """
+        Calculate inverse document frequency for a term.
+        """
+
+        total_documents = self.index.total_documents
+        document_frequency = self.index.get_document_frequency(term)
 
         if document_frequency == 0:
             return 0.0
@@ -25,59 +28,61 @@ class BM25:
         return math.log(
             1
             + (
-                total_documents
-                - document_frequency
-                + 0.5
+                total_documents - document_frequency + 0.5
             )
             / (
-                document_frequency
-                + 0.5
+                document_frequency + 0.5
             )
         )
 
-    def score(
-        self,
-        query: str,
-        doc_id: str,
-    ) -> float:
-        query_terms = tokenize(query)
+    def score(self, term: str, document_path: str) -> float:
+        """
+        Calculate the BM25 score for one term in one document.
+        """
 
-        document_length = self.index.document_lengths[doc_id]
-        average_length = self.index.average_document_length or 1.0
+        postings = self.index.get_postings(term)
+
+        if document_path not in postings:
+            return 0.0
+
+        term_frequency = postings[document_path]
+
+        document_length = self.index.get_document_length(document_path)
+        average_document_length = self.index.average_document_length
+
+        if average_document_length == 0:
+            return 0.0
+
+        idf = self.idf(term)
+
+        numerator = term_frequency * (self.k1 + 1)
+
+        denominator = (
+            term_frequency
+            + self.k1
+            * (
+                1
+                - self.b
+                + self.b
+                * (document_length / average_document_length)
+            )
+        )
+
+        return idf * (numerator / denominator)
+
+    def score_query(
+        self,
+        query_terms: list[str],
+        document_path: str
+    ) -> float:
+        """
+        Calculate the total BM25 score for multiple query terms
+        against one document.
+        """
 
         total_score = 0.0
 
         for term in query_terms:
-            postings = self.index.get_postings(term)
-
-            term_frequency = postings.get(doc_id, 0)
-
-            if term_frequency == 0:
-                continue
-
-            idf = self._idf(term)
-
-            numerator = (
-                term_frequency
-                * (self.k1 + 1)
-            )
-
-            denominator = (
-                term_frequency
-                + self.k1
-                * (
-                    1
-                    - self.b
-                    + self.b
-                    * document_length
-                    / average_length
-                )
-            )
-
-            total_score += (
-                idf
-                * numerator
-                / denominator
-            )
+            total_score += self.score(term, document_path)
 
         return total_score
