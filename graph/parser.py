@@ -8,68 +8,128 @@ class PythonDependencyParser:
     def __init__(self):
         self.graph = DependencyGraph()
 
-    def parse_repository(
-        self,
-        repository_path: str,
-    ) -> DependencyGraph:
-        root = Path(repository_path)
+    def parse_repository(self, repository_path: str) -> DependencyGraph:
+        root = Path(repository_path).resolve()
 
-        python_files = list(
-            root.rglob("*.py")
-        )
-
-        modules = {}
-
-        for file_path in python_files:
-            relative = file_path.relative_to(root)
-
-            module_name = ".".join(
-                relative.with_suffix("").parts
-            )
-
-            modules[module_name] = str(relative)
+        modules = self._discover_modules(root)
 
         for module_name, relative_path in modules.items():
             full_path = root / relative_path
 
             try:
-                source = full_path.read_text(
-                    encoding="utf-8"
-                )
-
+                source = full_path.read_text(encoding="utf-8")
                 tree = ast.parse(source)
 
-            except (
-                UnicodeDecodeError,
-                SyntaxError,
+            except (UnicodeDecodeError, SyntaxError, OSError):
+                continue
+
+            self._process_imports(
+                source_module=module_name,
+                source_path=relative_path,
+                tree=tree,
+                modules=modules,
+            )
+
+        return self.graph
+
+    def _discover_modules(
+        self,
+        root: Path,
+    ) -> dict[str, str]:
+
+        modules = {}
+
+        ignored_directories = {
+            ".git",
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".pytest_cache",
+        }
+
+        for file_path in root.rglob("*.py"):
+
+            relative = file_path.relative_to(root)
+
+            if any(
+                part.lower() in ignored_directories
+                for part in relative.parts
             ):
                 continue
 
-            for node in ast.walk(tree):
+            module_parts = list(
+                relative.with_suffix("").parts
+            )
 
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        imported = alias.name
+            if module_parts[-1] == "__init__":
+                module_parts = module_parts[:-1]
 
-                        if imported in modules:
-                            self.graph.add_dependency(
-                                relative_path,
-                                modules[imported],
-                            )
+            if not module_parts:
+                continue
 
-                elif isinstance(
-                    node,
-                    ast.ImportFrom,
-                ):
-                    if node.module is None:
-                        continue
+            module_name = ".".join(module_parts)
 
-                    imported = node.module
+            modules[module_name] = relative.as_posix()
 
-                    if imported in modules:
+        return modules
+
+    def _process_imports(
+        self,
+        source_module: str,
+        source_path: str,
+        tree: ast.AST,
+        modules: dict[str, str],
+    ) -> None:
+
+        for node in ast.walk(tree):
+
+            if isinstance(node, ast.Import):
+
+                for alias in node.names:
+                    dependency = self._resolve_module(
+                        alias.name,
+                        modules,
+                    )
+
+                    if dependency:
                         self.graph.add_dependency(
-                            relative_path,
-                            modules[imported],
+                            source_path,
+                            dependency,
                         )
 
-        return self.graph
+            elif isinstance(node, ast.ImportFrom):
+
+                if node.module is None:
+                    continue
+
+                dependency = self._resolve_module(
+                    node.module,
+                    modules,
+                )
+
+                if dependency:
+                    self.graph.add_dependency(
+                        source_path,
+                        dependency,
+                    )
+
+    @staticmethod
+    def _resolve_module(
+        imported_module: str,
+        modules: dict[str, str],
+    ) -> str | None:
+
+        if imported_module in modules:
+            return modules[imported_module]
+
+        parts = imported_module.split(".")
+
+        while len(parts) > 1:
+            parts.pop()
+
+            candidate = ".".join(parts)
+
+            if candidate in modules:
+                return modules[candidate]
+
+        return None
