@@ -25,7 +25,7 @@ class SearchEngine:
         tokens = tokenize(content)
         self.index.add_document(
             doc_id,
-            content,
+            tokens,
         )
 
     def remove_document(

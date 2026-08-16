@@ -8,8 +8,34 @@ def test_tokenizer():
 
     assert result == [
         "def",
-        "validate_access_token",
-        "user_id",
+        "validate",
+        "access",
+        "token",
+        "user",
+        "id",
+    ]
+
+
+def test_camel_case_identifier():
+    result = tokenize(
+        "validateAccessToken"
+    )
+
+    assert result == [
+        "validate",
+        "access",
+        "token",
+    ]
+
+
+def test_pascal_case_identifier():
+    result = tokenize(
+        "DatabaseConnection"
+    )
+
+    assert result == [
+        "database",
+        "connection",
     ]
 
 

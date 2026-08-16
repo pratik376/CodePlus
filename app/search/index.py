@@ -1,59 +1,103 @@
 from collections import defaultdict
-from typing import Dict
+
+from app.search.tokenizer import tokenize
 
 
 class InvertedIndex:
     def __init__(self):
-        # term -> {document_path: frequency}
-        self.index: Dict[str, Dict[str, int]] = defaultdict(dict)
+        # term -> {doc_id: term_frequency}
+        self.index: dict[str, dict[str, int]] = defaultdict(dict)
 
-        # document_path -> total number of tokens
-        self.document_lengths: Dict[str, int] = {}
+        # doc_id -> original document content
+        self.documents: dict[str, str] = {}
 
-        self.total_documents = 0
+        # doc_id -> number of tokens
+        self.document_lengths: dict[str, int] = {}
+
         self.total_document_length = 0
 
-    def add_document(self, document_path: str, tokens: list[str]) -> None:
+    @property
+    def document_count(self) -> int:
+        return len(self.documents)
+
+    @property
+    def total_documents(self) -> int:
+        return self.document_count
+
+    @property
+    def average_document_length(self) -> float:
+        if self.document_count == 0:
+            return 0.0
+
+        return (
+            self.total_document_length
+            / self.document_count
+        )
+
+    def add_document(
+        self,
+        doc_id: str,
+        content: str | list[str],
+    ) -> None:
         """
-        Add a tokenized document to the inverted index.
+        Add or update a document in the index.
+
+        Accepts either raw source code or pre-tokenized content.
         """
 
-        # If we're re-indexing an existing document,
-        # remove the old version first.
-        if document_path in self.document_lengths:
-            self.remove_document(document_path)
+        if doc_id in self.documents:
+            self.remove_document(doc_id)
 
-        term_frequencies = {}
+        if isinstance(content, str):
+            original_content = content
+            tokens = tokenize(content)
+        else:
+            tokens = content
+            original_content = " ".join(tokens)
+
+        term_frequencies: dict[str, int] = {}
 
         for token in tokens:
-            term_frequencies[token] = term_frequencies.get(token, 0) + 1
+            term_frequencies[token] = (
+                term_frequencies.get(token, 0) + 1
+            )
 
         for term, frequency in term_frequencies.items():
-            self.index[term][document_path] = frequency
+            self.index[term][doc_id] = frequency
+
+        self.documents[doc_id] = original_content
 
         document_length = len(tokens)
 
-        self.document_lengths[document_path] = document_length
-        self.total_documents += 1
+        self.document_lengths[doc_id] = document_length
         self.total_document_length += document_length
 
-    def remove_document(self, document_path: str) -> None:
-        """
-        Remove a document and its statistics from the index.
-        """
-
-        if document_path not in self.document_lengths:
+    def remove_document(
+        self,
+        doc_id: str,
+    ) -> None:
+        if doc_id not in self.documents:
             return
 
-        old_length = self.document_lengths.pop(document_path)
+        old_length = self.document_lengths.pop(
+            doc_id,
+            0,
+        )
 
-        self.total_documents -= 1
         self.total_document_length -= old_length
+
+        self.documents.pop(
+            doc_id,
+            None,
+        )
 
         empty_terms = []
 
         for term, postings in self.index.items():
-            postings.pop(document_path, None)
+            postings.pop(
+                doc_id,
+                None,
+            )
 
             if not postings:
                 empty_terms.append(term)
@@ -61,24 +105,31 @@ class InvertedIndex:
         for term in empty_terms:
             del self.index[term]
 
-    def get_postings(self, term: str) -> Dict[str, int]:
-        """
-        Return documents containing the term and their term frequencies.
-        """
-        return self.index.get(term, {})
+    def get_postings(
+        self,
+        term: str,
+    ) -> dict[str, int]:
+        return self.index.get(
+            term,
+            {},
+        )
 
-    def get_document_frequency(self, term: str) -> int:
-        """
-        Number of documents containing the term.
-        """
-        return len(self.index.get(term, {}))
+    def get_document_frequency(
+        self,
+        term: str,
+    ) -> int:
+        return len(
+            self.index.get(
+                term,
+                {},
+            )
+        )
 
-    def get_document_length(self, document_path: str) -> int:
-        return self.document_lengths.get(document_path, 0)
-
-    @property
-    def average_document_length(self) -> float:
-        if self.total_documents == 0:
-            return 0.0
-
-        return self.total_document_length / self.total_documents
+    def get_document_length(
+        self,
+        doc_id: str,
+    ) -> int:
+        return self.document_lengths.get(
+            doc_id,
+            0,
+        )
